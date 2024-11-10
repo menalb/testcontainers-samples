@@ -1,0 +1,18 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>atlas_console</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Bogus" Version="35.6.1" />
+    <PackageReference Include="MongoDb.Driver" Version="3.0.0" />
+    <PackageReference Include="SmartComponents.LocalEmbeddings" Version="0.1.0-preview10148" />
+    <PackageReference Include="Testcontainers.MongoDb" Version="4.0.0" />
+  </ItemGroup>
+
+</Project>
