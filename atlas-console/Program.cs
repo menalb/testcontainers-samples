@@ -87,7 +87,9 @@ Thread.Sleep(3000);
 // Read
 var filterBuilder = Builders<Student>.Filter;
 var filter = filterBuilder.Eq("Name", students.First().Name);
-var results = collection.Find(filter);
+var results = await collection.Find(filter).ToListAsync();
+
+results.ForEach(x => Console.WriteLine(x.Name));
 
 // Update
 var updateBuilder = Builders<Student>.Update;
@@ -109,6 +111,8 @@ var agg = collection
       Builders<Student>.Search.Text(x => x.Name, "Dev", fuzzyOptions),
       indexName: "student_name_index"
     );
+
+Thread.Sleep(1000);
 
 var devs = await agg.ToListAsync();
 devs.ForEach(x => Console.WriteLine(x.Name));
