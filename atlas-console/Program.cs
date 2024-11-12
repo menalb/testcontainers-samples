@@ -1,5 +1,6 @@
 ﻿using atlas_console;
 using Bogus;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.Driver.Search;
 using SmartComponents.LocalEmbeddings;
@@ -32,7 +33,7 @@ IMongoCollection<Student> collection = database.GetCollection<Student>("students
 using var embedder = new LocalEmbedder();
 EmbeddingF32 GenerateEmbedding(string description)
 {
-    var s = $"### ### Description: {description}";
+    var s = $"### Description: {description}";
     return embedder.Embed(s);
 }
 
@@ -44,9 +45,21 @@ var students = new Faker<Student>()
  .Generate(1000);
 
 // Insert Students
-await collection.InsertManyAsync(students);
-
-Thread.Sleep(3000);
+using (var session = await mongoClient.StartSessionAsync())
+{
+    // Begin transaction
+    session.StartTransaction();
+    try
+    {
+        await collection.InsertManyAsync(students);
+        await session.CommitTransactionAsync();
+    }
+    catch (Exception ex)
+    {
+        await session.AbortTransactionAsync();
+        Console.WriteLine(ex.Message);
+    }
+}
 
 // Create Text Search
 var command = new[]
@@ -64,7 +77,34 @@ var result = await container.ExecAsync(command);
 Console.WriteLine(result.Stdout);
 Console.WriteLine(result.Stderr);
 
-Thread.Sleep(3000);
+static T TryGetValue<T>(BsonDocument document, string name)
+{
+    if (!document.TryGetValue(name, out var value))
+    {
+        return default;
+    }
+
+    var result = BsonTypeMapper.MapToDotNetValue(value);
+    return (T)result;
+}
+
+async Task IndexExists(string indexName)
+{
+    var exit = false;
+    var i = 0;
+    while (!exit && i < 60)
+    {
+        Thread.Sleep(500);
+        var ind = await collection.SearchIndexes.ListAsync(indexName);
+        var first = await ind.FirstOrDefaultAsync();
+        var s = TryGetValue<string>(first, "status");
+        Console.WriteLine(s);
+
+        exit = s == "READY";
+
+        i++;
+    }
+}
 
 // Create Vector Search
 var commandVector = new[]
@@ -81,8 +121,6 @@ var resultVector = await container.ExecAsync(commandVector);
 
 Console.WriteLine(resultVector.Stdout);
 Console.WriteLine(resultVector.Stderr);
-
-Thread.Sleep(3000);
 
 // Read
 var filterBuilder = Builders<Student>.Filter;
@@ -112,7 +150,7 @@ var agg = collection
       indexName: "student_name_index"
     );
 
-Thread.Sleep(1000);
+await IndexExists("student_name_index");
 
 var devs = await agg.ToListAsync();
 devs.ForEach(x => Console.WriteLine(x.Name));
@@ -128,6 +166,8 @@ var options = new VectorSearchOptions<Student>()
 };
 
 var target = embedder.Embed("music");
+
+await IndexExists("student_company_index");
 
 var aggVector = collection
 .Aggregate()
