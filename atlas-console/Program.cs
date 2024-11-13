@@ -62,6 +62,7 @@ using (var session = await mongoClient.StartSessionAsync())
 }
 
 // Create Text Search
+var textIndexScript = File.ReadAllText(@"indexes\text.json");
 var command = new[]
        {
             "mongosh" ,
@@ -69,9 +70,8 @@ var command = new[]
             "--password", password,
             "--quiet",
             "--eval",
-            "db.students.createSearchIndex('student_name_index',{ mappings: { dynamic: true },'storedSource':{'include':['name']}} )"
+            $"db.students.createSearchIndex('student_name_index',{textIndexScript})"
         };
-
 var result = await container.ExecAsync(command);
 
 Console.WriteLine(result.Stdout);
@@ -107,6 +107,7 @@ async Task IndexExists(string indexName)
 }
 
 // Create Vector Search
+var vectorIndexScript = File.ReadAllText(@"indexes\vector.json");
 var commandVector = new[]
        {
             "mongosh" ,
@@ -114,7 +115,7 @@ var commandVector = new[]
             "--password", password,
             "--quiet",
             "--eval",
-            "db.students.createSearchIndex('student_company_index','vectorSearch',{ fields: [{'numDimensions': 384, 'path': 'embeddings','similarity':'cosine','type':'vector'}]} )"
+            $"db.students.createSearchIndex('student_company_index','vectorSearch', {vectorIndexScript} )"
         };
 
 var resultVector = await container.ExecAsync(commandVector);

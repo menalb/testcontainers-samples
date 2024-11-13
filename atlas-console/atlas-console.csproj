@@ -15,4 +15,10 @@
     <PackageReference Include="Testcontainers.MongoDb" Version="4.0.0" />
   </ItemGroup>
 
+   <ItemGroup>
+    <Content Include="indexes\*.*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>  
+  </ItemGroup>
+
 </Project>
