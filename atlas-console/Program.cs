@@ -1,20 +1,15 @@
-﻿using atlas_console;
+﻿using MongoAtlasTestContainer;
 using Bogus;
-using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.Driver.Search;
 using SmartComponents.LocalEmbeddings;
-using Testcontainers.MongoDb;
 
 var username = "mongo_username";
 var password = "mongo_password";
-MongoDbContainer container = new MongoDbBuilder()
-    .WithImage("mongodb/mongodb-atlas-local")
-    .WithUsername(username)
-    .WithPassword(password)
-    .WithEnvironment("MONGODB_INITDB_ROOT_USERNAME", username)
-    .WithEnvironment("MONGODB_INITDB_ROOT_PASSWORD", password)
-    .Build();
+
+var mongoIndex = MongoIndexHelper.BuildContainer(username, password);
+
+var container = mongoIndex.Container;
 
 await container.StartAsync();
 
@@ -28,7 +23,7 @@ var urlBuilder = new MongoUrlBuilder(connectionString)
 
 MongoClient mongoClient = new(urlBuilder.ToMongoUrl());
 IMongoDatabase database = mongoClient.GetDatabase("test");
-IMongoCollection<Student> collection = database.GetCollection<Student>("students");
+IMongoCollection<MongoAtlasTestContainer.Person> collection = database.GetCollection<MongoAtlasTestContainer.Person>("employees");
 
 using var embedder = new LocalEmbedder();
 EmbeddingF32 GenerateEmbedding(string description)
@@ -38,148 +33,103 @@ EmbeddingF32 GenerateEmbedding(string description)
 }
 
 // Create
-var students = new Faker<Student>()
- .RuleFor(u => u.Name, (f, u) => f.Name.FirstName())
- .RuleFor(u => u.CompanyCatchPhrase, (f, u) => f.Person.Company.CatchPhrase)
- .RuleFor(u => u.Embeddings, (f, u) => GenerateEmbedding(u.CompanyCatchPhrase).Values.ToArray())
+var people = new Faker<MongoAtlasTestContainer.Person>()
+ .RuleFor(u => u.Name, (f, u) => f.Person.FirstName)
+ .RuleFor(u => u.Department, (f, u) => f.Commerce.Department())
+ .RuleFor(u => u.Embeddings, (f, u) => GenerateEmbedding(u.Department).Values.ToArray())
  .Generate(1000);
 
-// Insert Students
-using (var session = await mongoClient.StartSessionAsync())
+try
 {
-    // Begin transaction
-    session.StartTransaction();
-    try
+    // Insert
+    using (var session = await mongoClient.StartSessionAsync())
     {
-        await collection.InsertManyAsync(students);
-        await session.CommitTransactionAsync();
-    }
-    catch (Exception ex)
-    {
-        await session.AbortTransactionAsync();
-        Console.WriteLine(ex.Message);
-    }
-}
-
-// Create Text Search
-var textIndexScript = File.ReadAllText(@"indexes\text.json");
-var command = new[]
-       {
-            "mongosh" ,
-            "--username", username,
-            "--password", password,
-            "--quiet",
-            "--eval",
-            $"db.students.createSearchIndex('student_name_index',{textIndexScript})"
-        };
-var result = await container.ExecAsync(command);
-
-Console.WriteLine(result.Stdout);
-Console.WriteLine(result.Stderr);
-
-static T TryGetValue<T>(BsonDocument document, string name)
-{
-    if (!document.TryGetValue(name, out var value))
-    {
-        return default;
+        // Begin transaction
+        session.StartTransaction();
+        try
+        {
+            await collection.InsertManyAsync(people);
+            await session.CommitTransactionAsync();
+        }
+        catch (Exception ex)
+        {
+            await session.AbortTransactionAsync();
+            Console.WriteLine(ex.Message);
+        }
     }
 
-    var result = BsonTypeMapper.MapToDotNetValue(value);
-    return (T)result;
-}
 
-async Task IndexExists(string indexName)
-{
-    var exit = false;
-    var i = 0;
-    while (!exit && i < 60)
+    // Create Text Search
+    var textSearchIndex = "name_index";
+    await mongoIndex.CreateSearchIndex(@"indexes\text.json", textSearchIndex, collection);
+
+    // Create Vector Search
+    var vectorSearchIndex = "department_index";
+    await mongoIndex.CreateVectorIndex(@"indexes\vector.json", vectorSearchIndex, collection);
+
+    // Read
+    var filterBuilder = Builders<MongoAtlasTestContainer.Person>.Filter;
+    var filter = filterBuilder.Eq("Name", people.First().Name);
+    var results = await collection.Find(filter).ToListAsync();
+
+    results.ForEach(x => Console.WriteLine(x.Name));
+
+    // Update
+    var updateBuilder = Builders<MongoAtlasTestContainer.Person>.Update;
+    var update = updateBuilder.Set("Name", "Dev Test");
+    collection.UpdateOne(filter, update);
+
+    // Search
+    Console.WriteLine("Text Search");
+    var fuzzyOptions = new SearchFuzzyOptions()
     {
-        Thread.Sleep(500);
-        var ind = await collection.SearchIndexes.ListAsync(indexName);
-        var first = await ind.FirstOrDefaultAsync();
-        var s = TryGetValue<string>(first, "status");
-        Console.WriteLine(s);
+        MaxEdits = 1,
+        PrefixLength = 1,
+        MaxExpansions = 256
+    };
 
-        exit = s == "READY";
+    var agg = collection
+        .Aggregate()
+        .Search(
+          Builders<MongoAtlasTestContainer.Person>.Search.Text(x => x.Name, "Dev", fuzzyOptions),
+          indexName: textSearchIndex
+        );
 
-        i++;
-    }
-}
+    var devs = await agg.ToListAsync();
+    devs.ForEach(x => Console.WriteLine(x.Name));
 
-// Create Vector Search
-var vectorIndexScript = File.ReadAllText(@"indexes\vector.json");
-var commandVector = new[]
-       {
-            "mongosh" ,
-            "--username", username,
-            "--password", password,
-            "--quiet",
-            "--eval",
-            $"db.students.createSearchIndex('student_company_index','vectorSearch', {vectorIndexScript} )"
-        };
+    Console.WriteLine("");
 
-var resultVector = await container.ExecAsync(commandVector);
+    // Vector
+    Console.WriteLine("Vector Search");
+    var options = new VectorSearchOptions<MongoAtlasTestContainer.Person>()
+    {
+        IndexName = vectorSearchIndex,
+        NumberOfCandidates = 150,
+    };
 
-Console.WriteLine(resultVector.Stdout);
-Console.WriteLine(resultVector.Stderr);
+    var target = embedder.Embed("music");
 
-// Read
-var filterBuilder = Builders<Student>.Filter;
-var filter = filterBuilder.Eq("Name", students.First().Name);
-var results = await collection.Find(filter).ToListAsync();
-
-results.ForEach(x => Console.WriteLine(x.Name));
-
-// Update
-var updateBuilder = Builders<Student>.Update;
-var update = updateBuilder.Set("Name", "Dev Leader");
-collection.UpdateOne(filter, update);
-
-// Search
-Console.WriteLine("Text Search");
-var fuzzyOptions = new SearchFuzzyOptions()
-{
-    MaxEdits = 1,
-    PrefixLength = 1,
-    MaxExpansions = 256
-};
-
-var agg = collection
+    var aggVector = collection
     .Aggregate()
-    .Search(
-      Builders<Student>.Search.Text(x => x.Name, "Dev", fuzzyOptions),
-      indexName: "student_name_index"
-    );
+    .VectorSearch(m => m.Embeddings, target.Values, 10, options);
 
-await IndexExists("student_name_index");
+    var v = await aggVector.ToListAsync();
+    v.ForEach(x => Console.WriteLine($"{x.Name} - {x.Department}"));
 
-var devs = await agg.ToListAsync();
-devs.ForEach(x => Console.WriteLine(x.Name));
 
-Console.WriteLine("");
+    // Delete
+    filter = filterBuilder.Eq("Name", "Dev Leader");
+    collection.DeleteOne(filter);
 
-// Vector
-Console.WriteLine("Vector Search");
-var options = new VectorSearchOptions<Student>()
+}
+catch
 {
-    IndexName = "student_company_index",
-    NumberOfCandidates = 150,
-};
-
-var target = embedder.Embed("music");
-
-await IndexExists("student_company_index");
-
-var aggVector = collection
-.Aggregate()
-.VectorSearch(m => m.Embeddings, target.Values, 10, options);
-
-var v = await aggVector.ToListAsync();
-v.ForEach(x => Console.WriteLine($"{x.Name} - {x.CompanyCatchPhrase}"));
-
-
-// Delete
-filter = filterBuilder.Eq("Name", "Dev Leader");
-collection.DeleteOne(filter);
-
-await container.StopAsync();
+    throw;
+}
+finally
+{
+    mongoClient.Dispose();
+    await container.StopAsync();
+    await container.DisposeAsync();
+}

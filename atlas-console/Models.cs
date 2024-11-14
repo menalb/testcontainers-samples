@@ -1,9 +1,9 @@
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 
-namespace atlas_console;
+namespace MongoAtlasTestContainer;
 
-public class Student
+public class Person
 {
     [BsonId]
     [BsonRepresentation(BsonType.ObjectId)]
@@ -11,7 +11,7 @@ public class Student
     [BsonElement("name")]
     public required string Name { get; set; }
     [BsonElement("companyCatchPhrase")]
-    public required string CompanyCatchPhrase { get; set; }
+    public required string Department { get; set; }
     [BsonElement("embeddings")]
     public required float[] Embeddings { get; set; }
 }
