@@ -58,12 +58,9 @@ try
         }
     }
 
-
-    // Create Text Search
+    // Create Indexes
     var textSearchIndex = "name_index";
     await mongoIndex.CreateSearchIndex(@"indexes\text.json", textSearchIndex, collection);
-
-    // Create Vector Search
     var vectorSearchIndex = "department_index";
     await mongoIndex.CreateVectorIndex(@"indexes\vector.json", vectorSearchIndex, collection);
 
